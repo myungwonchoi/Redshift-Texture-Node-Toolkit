@@ -6,7 +6,7 @@ import shutil
 
 # Add utils path
 current_dir = os.path.dirname(__file__)
-sub_dir = os.path.join(current_dir, "utils")
+sub_dir = os.path.join(current_dir, "mw_utils")
 if sub_dir not in sys.path:
     sys.path.append(sub_dir)
 
@@ -112,7 +112,7 @@ class ResizeTextureCommand(c4d.plugins.CommandData):
         # 1. Check Document Save State
         doc_path = doc.GetDocumentPath()
         if not doc_path:
-            c4d.gui.MessageDialog("Please save the document first.")
+            c4d.gui.MessageDialog("Please save the project first.")
             return True
 
         # 2. Validate Selection
@@ -130,6 +130,8 @@ class ResizeTextureCommand(c4d.plugins.CommandData):
                 return True
 
         processed_count = 0
+        success_list = []
+        fail_list = []
         
         with graph.BeginTransaction() as transaction:
             for node in texture_nodes:
@@ -146,8 +148,27 @@ class ResizeTextureCommand(c4d.plugins.CommandData):
                 if isinstance(current_path_val, maxon.Url):
                     current_path = current_path_val.GetSystemPath()
                 
+                # 텍스처 파일 존재 여부 확인 및 경로 보정
                 if not current_path or not os.path.isfile(current_path):
-                    continue
+                    path_found = False
+                    # 1. doc_path + current_path
+                    if doc_path and current_path:
+                        cand1 = os.path.join(doc_path, current_path)
+                        if os.path.exists(cand1) and os.path.isfile(cand1):
+                            current_path = cand1
+                            path_found = True
+                    
+                    # 2. doc_path + "tex" + current_path
+                    if not path_found and doc_path and current_path:
+                        cand2 = os.path.join(doc_path, "tex", current_path)
+                        if os.path.exists(cand2) and os.path.isfile(cand2):
+                            current_path = cand2
+                            path_found = True
+                            
+                    if not path_found:
+                        print(f"    텍스처 파일이 존재하지 않거나 파일이 아닙니다: {current_path}")
+                        fail_list.append(os.path.basename(current_path) if current_path else "Unknown Path")
+                        continue
 
                 # Prepare Target Path
                 filename = os.path.basename(current_path)
@@ -175,27 +196,48 @@ class ResizeTextureCommand(c4d.plugins.CommandData):
 
                 # Resize Logic
                 try:
-                    if not os.path.exists(target_path):
-                        print(f"Resizing: {filename} -> {new_filename}")
-                        resize_and_strip_metadata(source_path, target_path)
-                    else:
-                        print(f"File exists, using existing: {new_filename}")
+                    should_resize = True
+                    if os.path.exists(target_path):
+                        # File exists, ask user to overwrite
+                        # Note: This might be annoying if many files exist, but fulfills the specific request.
+                        if c4d.gui.QuestionDialog(f"File '{new_filename}' already exists.\nOverwrite?"):
+                             print(f"Overwriting: {new_filename}")
+                             should_resize = True
+                        else:
+                             print(f"Using existing file: {new_filename}")
+                             should_resize = False
+                    
+                    if should_resize:
+                        if not os.path.exists(target_path) or should_resize: # Check again or just do it
+                             print(f"Resizing: {filename} -> {new_filename}")
+                             resize_and_strip_metadata(source_path, target_path)
                     
                     # Update Node Path
                     path_port.SetPortValue(target_path)
                     processed_count += 1
+                    success_list.append(new_filename)
                     
                 except Exception as e:
                     print(f"Error processing {filename}: {e}")
+                    fail_list.append(filename)
                     # Continue to next node even if one fails
         
             transaction.Commit()
         
+        msg = ""
         if processed_count > 0:
             c4d.EventAdd()
-            c4d.gui.MessageDialog(f"Successfully resized/updated {processed_count} textures.")
+            msg += f"Successfully resized/updated {processed_count} textures.\n\n"
         else:
-             c4d.gui.MessageDialog("No textures were processed.")
+            msg += "No textures were resized.\n\n"
+
+        if success_list:
+            msg += "[Changed Textures]\n" + "\n".join(success_list) + "\n\n"
+        
+        if fail_list:
+             msg += "[Failed/Unchanged Textures]\n" + "\n".join(fail_list)
+             
+        c4d.gui.MessageDialog(msg)
 
         return True
 

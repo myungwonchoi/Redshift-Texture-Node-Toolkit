@@ -6,7 +6,7 @@ import sys
 
 # redshift_utils 경로 추가
 current_dir = os.path.dirname(__file__)
-sub_dir = os.path.join(current_dir, "utils")
+sub_dir = os.path.join(current_dir, "mw_utils")
 if sub_dir not in sys.path:
     sys.path.append(sub_dir)
 
